@@ -1,0 +1,50 @@
+services:
+  bookstack:
+    image: lscr.io/linuxserver/bookstack
+    container_name: bookstack
+    environment:
+      - APP_URL=${APP_URL}
+      - DB_HOST=mariadb
+      - DB_USERNAME=${DB_USER}
+      - DB_PASSWORD=${DB_PASS}
+      - DB_DATABASE=${DB_DATABASE}
+      - APP_KEY=${APP_KEY}
+      - AUTH_METHOD=standard
+      - APP_DEBUG=true
+      # --- LDAP UL (désactivé pour le mode local) ---
+      # - AUTH_METHOD=ldap
+      # - LDAP_SERVER=ldaps://montet-dc1.ad.univ-lorraine.fr:636
+      # - LDAP_BASE_DN=OU=_Utilisateurs,OU=UL,DC=ad,DC=univ-lorraine,DC=fr
+      # - LDAP_DN=${LDAP_DN}
+      # - LDAP_PASS=${LDAP_PASS}
+      # - LDAP_USER_FILTER=(&(objectClass=user)(sAMAccountName=$${user})(memberOf=CN=GGA_GR_app_info_infra_vpn_iutnc-etudiants,OU=UDLGroup,OU=_Groupes,OU=UL,DC=ad,DC=univ-lorraine,DC=fr))
+      # - LDAP_USER_TO_GROUPS=true
+      # - LDAP_GROUP_ATTRIBUTE=memberOf
+      # - LDAP_ID_ATTRIBUTE=sAMAccountName
+      # - LDAP_EMAIL_ATTRIBUTE=mail
+      # - LDAP_DISPLAY_NAME_ATTRIBUTE=displayName
+      # - LDAP_VERSION=3
+      # - LDAP_TLS_CA_CERT=/config/ul-ca.crt
+    volumes:
+      - bookstack_data:/config
+    ports:
+      - 6875:80
+    depends_on:
+      - mariadb
+    restart: unless-stopped
+
+  mariadb:
+    image: mariadb:latest
+    container_name: bookstack_db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASS}
+      - MYSQL_DATABASE=${DB_DATABASE}
+      - MYSQL_USER=${DB_USER}
+      - MYSQL_PASSWORD=${DB_PASS}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    restart: unless-stopped
+
+volumes:
+  bookstack_data:
+  mariadb_data:

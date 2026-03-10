@@ -1,0 +1,299 @@
+ÉTAPE 1 — ANALYSE DE L'EXISTANT ET STRATÉGIE
+=============================================
+
+
+1. INVENTAIRE DES DONNÉES CRITIQUES
+------------------------------------
+
+On a deux stacks Docker à protéger dans ce projet.
+
+
+STACK BOOKSTACK (wiki + base de données)
+
+  La stack BookStack se compose de deux conteneurs : l'application web
+  BookStack et sa base MariaDB. Les données critiques sont :
+
+  - La base de données MariaDB (volume "bookstack_mariadb_data") :
+    C'est le coeur de BookStack. Elle contient toutes les pages du wiki,
+    les livres, les étagères, les comptes utilisateurs, les permissions
+    et les tags. Sans cette base, l'application est vide. On la
+    sauvegarde via un dump SQL (mysqldump) pour garantir la cohérence
+    des données.
+
+  - Le volume applicatif BookStack (volume "bookstack_bookstack_data") :
+    Il contient la configuration interne de Laravel, les thèmes, et
+    surtout les fichiers uploadés (images, pièces jointes dans les
+    pages). Ces fichiers ne sont pas dans la base de données, donc il
+    faut les sauvegarder séparément.
+
+  - Le fichier .env (bookstack/.env) :
+    Il contient les secrets : APP_KEY (clé de chiffrement Laravel, sans
+    laquelle BookStack ne peut pas déchiffrer certaines données en base),
+    les mots de passe de la base de données, et les credentials LDAP
+    quand on est en mode UL. Ce fichier n'est PAS versionné dans Git
+    (il est dans le .gitignore), donc si on le perd sans sauvegarde,
+    il faut tout reconfigurer et on risque de ne plus pouvoir lire
+    les données chiffrées en base.
+
+  - Le docker-compose.yml (bookstack/docker-compose.yml) :
+    Il définit toute l'infrastructure (images, ports, volumes, variables
+    d'environnement). Il est déjà versionné dans Git, mais on l'inclut
+    dans la sauvegarde Restic quand même pour que la sauvegarde soit
+    autonome (on peut restaurer sans avoir accès au dépôt Git).
+
+
+STACK DE SUPERVISION (Prometheus / Grafana)
+
+  Cette stack vient du projet Audit-machine. Elle est dans
+  autres-services/Audit-machine/supervision/. Elle se compose de
+  cinq conteneurs : deux agents d'audit (Ruby), un json_exporter,
+  Prometheus et Grafana.
+
+  - Le volume Grafana (volume "grafana-data") :
+    C'est la seule donnée persistante à sauvegarder dans cette stack.
+    Il contient les dashboards créés ou modifiés via l'interface, les
+    préférences utilisateur et la config des alertes. Même si le
+    dashboard initial est provisionné depuis un fichier JSON dans Git,
+    toute modification faite via l'interface web de Grafana est stockée
+    dans ce volume.
+
+  - Prometheus :
+    Ses données (les séries temporelles, la TSDB) sont dans le conteneur
+    mais PAS dans un volume nommé persistant. Si le conteneur est détruit,
+    les métriques historiques sont perdues. Mais ce n'est pas grave :
+    Prometheus recollecte automatiquement les métriques dès qu'il
+    redémarre. On ne sauvegarde donc PAS les données Prometheus.
+
+  - Les agents d'audit (agent_a et agent_b) :
+    Ils sont complètement stateless. Ils lisent /proc du host à la volée
+    et génèrent un fichier audit.json en mémoire. Rien à sauvegarder.
+
+  - Les fichiers de configuration (prometheus.yml, json_exporter/config.yml,
+    grafana/provisioning/, docker-compose.yml) :
+    Ils sont tous versionnés dans Git. Pas besoin de sauvegarde dédiée,
+    mais ils seront inclus par défaut si on sauvegarde le répertoire.
+
+
+PROJET SAE FORENSIQUE
+
+  Ce projet ne contient que des scripts (C, Ruby, Bash) et un Makefile.
+  Aucun service Docker, aucune donnée persistante. Tout est dans Git.
+  Il n'y a rien à sauvegarder pour le PRA.
+
+
+RÉSUMÉ DE CE QU'ON SAUVEGARDE
+
+  1. Dump SQL de la base "bookstack" (via mysqldump)
+  2. Volume bookstack_bookstack_data (uploads, config Laravel)
+  3. Volume grafana-data (dashboards Grafana)
+  4. Fichier bookstack/.env (secrets, APP_KEY)
+  5. Les docker-compose.yml des deux stacks (redondance avec Git)
+
+
+2. OBJECTIFS DE REPRISE : RPO ET RTO
+-------------------------------------
+
+Le RPO (Recovery Point Objective) c'est la perte de données maximale
+qu'on accepte. Par exemple, un RPO de 24h signifie qu'on accepte de
+perdre au maximum les 24 dernières heures de modifications.
+
+Le RTO (Recovery Time Objective) c'est le temps maximum pour remettre
+le service en ligne après un incident.
+
+
+  BookStack (application web) :
+    RPO = 24h, RTO = 1h
+    C'est un wiki interne, les modifications sont peu fréquentes
+    (quelques pages par jour). Perdre une journée de travail est
+    acceptable. Par contre, comme c'est le service principal, il faut
+    pouvoir le remettre en ligne rapidement.
+
+  MariaDB (base de données) :
+    RPO = 24h, RTO = 30 min
+    Même RPO que BookStack puisque la base contient les données de
+    BookStack. Le RTO est plus court parce que restaurer un dump SQL
+    est techniquement rapide (quelques minutes pour un petit wiki).
+
+  Grafana (dashboards de supervision) :
+    RPO = 24h, RTO = 30 min
+    Les dashboards ne changent pas souvent. La plupart sont provisionnés
+    depuis Git, donc seules les modifications manuelles faites via
+    l'interface seraient perdues. La restauration est rapide (juste
+    remettre le volume en place).
+
+  Prometheus (métriques) :
+    RPO = non applicable, RTO = 15 min
+    On ne sauvegarde pas les métriques Prometheus. Elles se recollectent
+    automatiquement dès que le conteneur redémarre. Un simple
+    "docker compose up" suffit.
+
+  Fichier .env (secrets) :
+    RPO = non applicable (fichier rarement modifié), RTO = 5 min
+    C'est un fichier statique qu'on change uniquement lors d'un
+    redéploiement. Tant qu'on a une copie à jour dans la sauvegarde,
+    c'est bon.
+
+
+FRÉQUENCE DE SAUVEGARDE RETENUE : une fois par jour, la nuit à 02h00.
+C'est cohérent avec un RPO de 24h.
+
+
+3. STRATÉGIE DE SAUVEGARDE : RÈGLE 3-2-1
+-----------------------------------------
+
+La règle 3-2-1 est le standard de l'industrie pour la sauvegarde.
+Elle dit qu'il faut avoir :
+
+  - 3 copies des données au total
+  - sur 2 supports différents
+  - dont 1 copie hors site (géographiquement séparée)
+
+Voici comment on l'applique :
+
+  Copie 1 (production) :
+    Les données en production, dans les volumes Docker sur le disque
+    local de la machine. C'est la donnée "vivante", celle qui est
+    utilisée par les conteneurs.
+
+  Copie 2 (sauvegarde locale Restic) :
+    Un dépôt Restic initialisé sur un loop device. Un loop device c'est
+    un fichier qui simule un disque séparé (on crée un fichier de X Go,
+    on le formate en ext4, et on le monte comme un vrai disque). Restic
+    y stocke les sauvegardes de manière chiffrée, dédupliquée et
+    incrémentale. Même si physiquement c'est le même disque, logiquement
+    c'est un support séparé (un rm sur le volume Docker ne touche pas
+    le loop device).
+
+  Copie 3 (sauvegarde externalisée) :
+    Le dépôt Restic est répliqué vers un stockage objet S3 (soit MinIO
+    en auto-hébergé dans un autre conteneur Docker, soit un service
+    cloud comme Backblaze B2 ou Scaleway). Cette copie est hors site :
+    même si la machine de production brûle ou se fait chiffrer par un
+    ransomware, la copie distante est intacte.
+
+
+POURQUOI CETTE RÈGLE EST IMPORTANTE
+
+  - Panne disque : sans la règle, les données sont perdues. Avec, on
+    restaure depuis la copie locale ou distante.
+
+  - Suppression accidentelle d'un volume Docker : la commande
+    "docker volume rm" est irréversible. Mais Restic conserve des
+    snapshots horodatés, donc on peut revenir à n'importe quel état
+    antérieur.
+
+  - Ransomware : un ransomware chiffre tout ce qu'il peut atteindre
+    sur la machine, y compris les sauvegardes locales. Seule la copie
+    hors site (stockage objet avec des credentials séparés) survit.
+
+  - Corruption silencieuse : les données peuvent se corrompre sans
+    qu'on s'en rende compte. Restic vérifie l'intégrité de ses dépôts
+    avec "restic check" (vérification des checksums de chaque bloc).
+
+
+POLITIQUE DE RÉTENTION
+
+  On utilise : restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
+
+  Ça veut dire :
+    - On garde 1 snapshot par jour pendant 7 jours (la dernière semaine)
+    - On garde 1 snapshot par semaine pendant 4 semaines (le dernier mois)
+    - On garde 1 snapshot par mois pendant 12 mois (la dernière année)
+    - Les snapshots plus anciens ou en doublon sont supprimés (prune)
+
+  Ça permet de restaurer avec une granularité fine sur la semaine
+  récente, et de garder un historique long sans exploser l'espace
+  disque grâce à la déduplication de Restic.
+
+
+4. SCÉNARIOS D'INCIDENT POUR LES TESTS
+---------------------------------------
+
+Le sujet demande au moins trois scénarios d'incident qu'on testera
+à l'étape 5. Voici ceux qu'on a retenus :
+
+
+SCÉNARIO 1 — PANNE DISQUE (données locales inaccessibles)
+
+  Ce qui se passe : le disque contenant les volumes Docker tombe en
+  panne. Les conteneurs ne démarrent plus, les données sont
+  inaccessibles.
+
+  Comment on simule : on arrête les conteneurs avec "docker compose down",
+  puis on supprime les deux volumes Docker avec "docker volume rm".
+  Ça simule une perte totale des données locales.
+
+  Ce qui est impacté : le volume BookStack (uploads, config) ET le
+  volume MariaDB (toute la base de données).
+
+  Comment on restaure :
+    1. Restaurer les fichiers depuis un snapshot Restic
+    2. Recréer les volumes Docker
+    3. Remettre les fichiers restaurés dans les volumes
+    4. Réinjecter le dump SQL dans MariaDB
+    5. Relancer la stack avec docker compose up
+    6. Vérifier que BookStack fonctionne et que les données sont là
+
+  RTO cible : moins d'1 heure.
+
+
+SCÉNARIO 2 — SUPPRESSION ACCIDENTELLE D'UN VOLUME DOCKER
+
+  Ce qui se passe : un opérateur exécute par erreur
+  "docker volume rm bookstack_mariadb_data". La base de données
+  est supprimée, mais le reste est intact.
+
+  Comment on simule : "docker compose down" puis
+  "docker volume rm bookstack_mariadb_data".
+
+  Ce qui est impacté : uniquement la base MariaDB.
+
+  Comment on restaure :
+    1. Extraire le dump SQL depuis un snapshot Restic
+       (restic restore --include pour cibler uniquement le dump)
+    2. Relancer la stack (MariaDB va recréer un volume vide)
+    3. Réinjecter le dump avec "mariadb < dump.sql"
+    4. Vérifier que BookStack retrouve ses données
+
+  RTO cible : moins de 30 minutes.
+
+
+SCÉNARIO 3 — RANSOMWARE SIMULÉ (chiffrement des données)
+
+  Ce qui se passe : un ransomware chiffre tous les fichiers accessibles
+  sur la machine, y compris les volumes Docker ET les sauvegardes
+  locales (le loop device Restic). C'est le pire scénario.
+
+  Comment on simule : on remplace le contenu des volumes par des
+  données aléatoires (avec dd ou openssl rand). On ne fait évidemment
+  PAS tourner un vrai ransomware. On suppose aussi que le dépôt Restic
+  local est compromis (inutilisable).
+
+  Ce qui est impacté : tout. Volumes Docker, dépôt Restic local.
+
+  Comment on restaure :
+    1. La copie externalisée (stockage objet S3) n'est pas touchée
+       car elle est sur un système séparé avec ses propres credentials
+    2. Initialiser un nouveau dépôt Restic local (ou travailler
+       directement depuis le dépôt distant)
+    3. Restaurer depuis le stockage objet
+    4. Recréer les volumes, réinjecter les données
+    5. Relancer les stacks
+
+  RTO cible : moins d'1 heure (dépend du débit réseau pour télécharger
+  les données depuis le stockage objet).
+
+
+RÉCAPITULATIF
+-------------
+
+  Services protégés : BookStack + MariaDB + Grafana
+  RPO global : 24h
+  RTO application BookStack : 1h
+  RTO base de données : 30 min
+  Fréquence de sauvegarde : quotidienne à 02h00
+  Outil de sauvegarde : Restic (chiffré, dédupliqué, incrémental)
+  Stockage local : dépôt Restic sur loop device
+  Stockage distant : stockage objet S3 (MinIO ou cloud)
+  Rétention : 7 daily + 4 weekly + 12 monthly
+  Scénarios de test : panne disque, suppression volume, ransomware

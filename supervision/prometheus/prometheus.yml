@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 15s          # Fréquence par défaut de scrute (toutes les 15 s)
+  evaluation_interval: 15s      # Fréquence d’évaluation des règles (si tu en ajoutes plus tard)
+
+scrape_configs:
+  # 1) Scrute les agents via json_exporter /probe (pattern "multi-target")
+  - job_name: 'json_agents'
+    scrape_interval: 10s        # Scrute ces cibles un peu plus souvent (toutes les 10 s)
+    metrics_path: /probe        # Endpoint spécial du json_exporter (/probe) au lieu de /metrics
+    params:
+      module: [agent]           # Utilise le module "agent" défini dans config.yml du json_exporter
+    static_configs:
+      - targets:                # Liste des URLs JSON à superviser (les agents)
+          - http://agent_a:9101/audit.json
+          - http://agent_b:9102/audit.json
+        labels:
+          group: lab            # Label commun pour regrouper ces cibles (facilite les filtres)
+
+    # Relabeling pour transformer les targets en paramètres "target" de /probe
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+        # Copie la valeur de __address__ (l’URL JSON) dans le paramètre target=
+      - target_label: __address__
+        replacement: json_exporter:7979
+        # Remplace l’adresse réelle par l’adresse du json_exporter
+        # => Prometheus scrute json_exporter, qui lui va chercher le JSON cible
+      - source_labels: [__param_target]
+        target_label: instance
+        # Met l’URL JSON dans le label "instance" (visible dans Grafana/PromQL)
+
+  # 2) Scrute l’exporter lui-même (ses propres métriques internes)
+  - job_name: 'json_exporter'
+    static_configs:
+      - targets: ['json_exporter:7979']   # Scrute directement /metrics du json_exporter

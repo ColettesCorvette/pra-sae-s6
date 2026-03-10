@@ -1,0 +1,66 @@
+modules:
+  agent:
+    http_client_config:
+      follow_redirects: false   # Ne suit pas les redirections HTTP
+      enable_http2: false       # Force l’utilisation de HTTP/1.1
+
+    metrics:
+      - name: agent_info
+        help: Agent info
+        type: object
+        path: '{.metrics.meta}'   # Va chercher la partie "meta" dans le JSON
+        labels:
+          hostname: '{.hostname}' # Expose hostname comme label
+          kernel:   '{.kernel}'   # Expose la version du kernel comme label
+          os:       '{.os}'       # Expose le système d’exploitation comme label
+        values:
+          info: '1'               # Valeur fixe (1) juste pour avoir une métrique "présente"
+
+      - name: cpu
+        help: CPU usage percent over a short interval
+        type: object
+        path: '{.metrics.cpu}'    # Lit la section "cpu" dans le JSON
+        labels: {}                # Pas de labels spécifiques
+        values:
+          usage_percent: '{.usage_percent}'  # Pourcentage d’utilisation CPU
+
+      - name: load
+        help: Load average over 1, 5, 15 minutes
+        type: object
+        path: '{.metrics.load}'   # Lit la section "load"
+        labels: {}
+        values:
+          load1:  '{.load1}'      # Charge moyenne sur 1 minute
+          load5:  '{.load5}'      # Charge moyenne sur 5 minutes
+          load15: '{.load15}'     # Charge moyenne sur 15 minutes
+
+      - name: mem
+        help: Memory usage in bytes
+        type: object
+        path: '{.metrics.mem}'    # Lit la section "mem"
+        labels: {}
+        values:
+          total_bytes:       '{.total_bytes}'      # Mémoire totale
+          used_bytes:        '{.used_bytes}'       # Mémoire utilisée
+          swap_total_bytes:  '{.swap_total_bytes}' # Swap total
+          swap_used_bytes:   '{.swap_used_bytes}'  # Swap utilisé
+
+      - name: disk
+        help: Disk usage per mountpoint
+        type: object
+        path: '{.metrics.disk[*]}' # Parcourt chaque entrée de la liste "disk"
+        labels:
+          mountpoint: '{.mount}'   # Label = point de montage
+          device:     '{.device}'  # Label = device (/dev/...)
+        values:
+          total_bytes: '{.total_bytes}'  # Taille totale du système de fichiers
+          used_bytes:  '{.used_bytes}'   # Espace utilisé
+
+      - name: service
+        help: Critical services
+        type: object
+        path: '{.metrics.services[*]}' # Parcourt la liste "services"
+        labels:
+          service: '{.name}'           # Label = nom du service
+        values:
+          up: '{.up}'                  # 1 si le service est up, 0 sinon

@@ -1,0 +1,36 @@
+                  (Même machine Linux hôte)
+         +---------------------------------------+
+         |               Host Linux              |
+         |   /proc, /etc, /var, /dev, /...       |
+         +-----------------+---------------------+
+                           ^
+                           |   Montage /:/host (lecture seule)
+           +---------------+-------------------+
+           |                                   |
+   +---------------+                   +---------------+
+   |   agent_a     |                   |   agent_b     |
+   |   (Docker)    |                   |   (Docker)    |
+   | - script Ruby |                   | - script Ruby |
+   | - BusyBox     |                   | - BusyBox     |
+   +-------+-------+                   +-------+-------+
+           |                                   |
+           | écrit /app/audit.json             | écrit /app/audit.json
+           |                                   |
+   HTTP :9101 (/audit.json)            HTTP :9102 (/audit.json)
+           \                                   /
+            \                                 /
+             \                               /
+              \                             /
+               v                           v
+                  [ json_exporter (Docker) ]
+                     module "agent" lit les JSON
+                     et expose des métriques Prometheus
+                             |
+                             | /metrics (scrape Prometheus)
+                             v
+                     [ Prometheus (Docker) ]
+                             |
+                             | requêtes PromQL
+                             v
+                      [ Grafana (Docker) ]
+                    dashboards "Audit machine"
