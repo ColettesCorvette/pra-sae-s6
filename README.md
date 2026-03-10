@@ -10,13 +10,20 @@ Solution de sauvegarde et de reprise d'activité pour une infrastructure de serv
 pra-sae/
 ├── bookstack/              # Docker Compose + config de BookStack (service à protéger)
 ├── supervision/            # Stack Prometheus/Grafana (service à protéger)
+├── minio/                  # Stack MinIO — stockage objet S3 (étape 3)
+│   ├── docker-compose.yml
+│   └── .env.example
 ├── scripts/
-│   └── backup.sh           # Script de sauvegarde locale Restic
+│   ├── backup.sh           # Script de sauvegarde locale + réplication S3 (étapes 2 & 3)
+│   └── init-minio-repo.sh  # Initialisation one-shot du bucket et du dépôt Restic S3
 ├── secrets/                # Mots de passe Restic, credentials MinIO (gitignored)
+│   ├── minio-credentials.example
+│   └── restic-password     # gitignored — à créer manuellement
 └── docs/
-    ├── 01-analyse-strategie.md    # Étape 1 — Inventaire, RPO/RTO, règle 3-2-1
-    ├── 01-analyse-strategie.txt   # Idem en texte brut
-    └── 03-externalisation-guide.txt  # Guide pour l'étape 3 (MinIO)
+    ├── 01-analyse-strategie.md        # Étape 1 — Inventaire, RPO/RTO, règle 3-2-1
+    ├── 01-analyse-strategie.txt       # Idem en texte brut
+    ├── 03-externalisation-guide.txt   # Notes d'orientation (étape 3)
+    └── 03-externalisation.md          # Documentation complète de l'étape 3
 ```
 
 ## Démarrage rapide

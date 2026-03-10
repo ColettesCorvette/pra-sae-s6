@@ -1,6 +1,7 @@
 # Secrets (mots de passe Restic, credentials MinIO, .env)
 secrets/
 bookstack/.env
+minio/.env
 
 # Loop device image
 *.img

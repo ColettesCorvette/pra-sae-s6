@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # =============================================================================
-# Script de sauvegarde locale avec Restic
-# Étape 2 — Sauvegarde des volumes Docker + dump MariaDB
+# Script de sauvegarde — Étapes 2 & 3
+# Étape 2 : Sauvegarde locale (dump MariaDB + volumes Docker → Restic local)
+# Étape 3 : Réplication vers stockage objet MinIO (backend S3 de Restic)
 # =============================================================================
 
 # --- Configuration -----------------------------------------------------------
@@ -89,11 +90,64 @@ restic backup "${BACKUP_STAGING}" \
     --tag bookstack --tag mariadb --tag config \
     --verbose
 
-# --- 5. Vérification ---------------------------------------------------------
-log "Vérification de l'intégrité du dépôt..."
+# --- 5. Politique de rétention -----------------------------------------------
+# Étape 2 — exigée par le sujet (§2.3)
+log "Application de la politique de rétention (local)..."
+restic forget \
+    --keep-daily   7 \
+    --keep-weekly  4 \
+    --keep-monthly 12 \
+    --prune
+
+# --- 6. Vérification de l'intégrité (local) ----------------------------------
+log "Vérification de l'intégrité du dépôt local..."
 restic check
 
-log "Snapshots disponibles :"
+log "Snapshots disponibles (dépôt local) :"
 restic snapshots
 
-log "=== Sauvegarde terminée avec succès ==="
+# =============================================================================
+# ÉTAPE 3 — Réplication vers MinIO (stockage objet S3)
+# =============================================================================
+
+# Chargement des credentials MinIO (gitignored)
+MINIO_CREDS="${PROJECT_DIR}/secrets/minio-credentials"
+if [ ! -f "${MINIO_CREDS}" ]; then
+    log "WARN: ${MINIO_CREDS} introuvable — réplication S3 ignorée."
+    log "      Copier secrets/minio-credentials.example → secrets/minio-credentials et remplir les valeurs."
+else
+    # shellcheck source=/dev/null
+    source "${MINIO_CREDS}"
+
+    RESTIC_REPO_S3="s3:http://localhost:9000/restic-backup"
+    log "=== Début de la réplication vers MinIO (${RESTIC_REPO_S3}) ==="
+
+    # --- 7. Copie des snapshots du dépôt local vers MinIO --------------------
+    # 'restic copy' transfère uniquement les données manquantes (incrémental).
+    # Nécessite restic >= 0.14. Si erreur, vérifier la version avec : restic version
+    log "Copie des snapshots vers MinIO..."
+    restic copy \
+        --repo         "${RESTIC_REPOSITORY}" \
+        --password-file "${RESTIC_PASSWORD_FILE}" \
+        --to-repo      "${RESTIC_REPO_S3}" \
+        --to-password-file "${RESTIC_PASSWORD_FILE}"
+
+    # --- 8. Politique de rétention sur le dépôt distant ---------------------
+    log "Application de la politique de rétention (MinIO)..."
+    RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic forget \
+        --keep-daily   7 \
+        --keep-weekly  4 \
+        --keep-monthly 12 \
+        --prune
+
+    # --- 9. Vérification de l'intégrité du dépôt distant --------------------
+    log "Vérification de l'intégrité du dépôt MinIO..."
+    RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic check
+
+    log "Snapshots disponibles (dépôt MinIO) :"
+    RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic snapshots
+
+    log "=== Réplication vers MinIO terminée avec succès ==="
+fi
+
+log "=== Sauvegarde complète terminée avec succès ==="
