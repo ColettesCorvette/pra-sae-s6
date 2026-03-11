@@ -43,6 +43,14 @@ DUMP_SIZE=$(du -h "${DUMP_FILE}" | cut -f1)
 log "Dump extrait : ${DUMP_FILE} (${DUMP_SIZE})"
 
 # --- 2. Réinjecter le dump dans MariaDB -------------------------------------
+log "Remise à zéro de la base de données (DROP + CREATE)..."
+# Nécessaire pour garantir une ardoise propre : si la base contient déjà
+# des tables (même vides ou corrompues), la réinjection du dump échouerait
+# sur les CREATE TABLE. On supprime et on recrée.
+docker exec "${DB_CONTAINER}" \
+    mariadb -u"${DB_USER}" -p"${DB_PASS}" \
+    -e "DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME};"
+
 log "Réinjection du dump dans MariaDB..."
 docker exec -i "${DB_CONTAINER}" \
     mariadb -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${DUMP_FILE}"

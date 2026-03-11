@@ -77,6 +77,11 @@ for i in $(seq 1 30); do
 done
 
 # --- 5. Réinjecter le dump SQL -----------------------------------------------
+log "Remise à zéro de la base de données (DROP + CREATE)..."
+docker exec "${DB_CONTAINER}" \
+    mariadb -u"${DB_USER}" -p"${DB_PASS}" \
+    -e "DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME};"
+
 log "Réinjection du dump SQL..."
 docker exec -i "${DB_CONTAINER}" \
     mariadb -u"${DB_USER}" -p"${DB_PASS}" "${DB_NAME}" < "${STAGING}/dumps/bookstack.sql"

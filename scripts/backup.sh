@@ -43,6 +43,36 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# En cas d'erreur non gérée (set -e), écrire un rapport "failed"
+# et mettre backup_integrity_status à 1 pour alerter Prometheus.
+on_error() {
+    local exit_code=$?
+    local line_number=$1
+    log "ERREUR à la ligne ${line_number} (code ${exit_code}) — rapport d'échec généré."
+
+    local err_duration=$(( $(date +%s) - START_TIME ))
+
+    # Rapport JSON failure
+    cat > "${REPORT_DIR}/backup-$(date +%Y%m%d-%H%M%S).json" <<JSONEOF
+{
+  "date": "$(date -Iseconds)",
+  "status": "failed",
+  "duration_seconds": ${err_duration},
+  "error_line": ${line_number},
+  "error_code": ${exit_code}
+}
+JSONEOF
+
+    # Métrique Prometheus : indique l'échec à node_exporter
+    mkdir -p "${METRICS_DIR}"
+    cat > "${METRICS_DIR}/backup.prom" <<PROMEOF
+# HELP backup_integrity_status Statut de la vérification d'intégrité (0=OK, 1=erreur)
+# TYPE backup_integrity_status gauge
+backup_integrity_status 1
+PROMEOF
+}
+trap 'on_error $LINENO' ERR
+
 # --- Préparation du staging --------------------------------------------------
 log "=== Début de la sauvegarde ==="
 # Nettoyage préalable (même logique que cleanup)
