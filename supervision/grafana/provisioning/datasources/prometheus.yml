@@ -2,6 +2,7 @@ apiVersion: 1              # Version du format de provisioning Grafana
 datasources:
   - name: Prometheus       # Nom affiché dans Grafana pour la source de données
     type: prometheus       # Type de data source (ici Prometheus)
+    uid: PBFA97CFB590B2093  # UID fixe, référencé dans les dashboards provisionnés
     access: proxy          # Les requêtes passent par le backend Grafana
     isDefault: true        # Définit cette data source comme valeur par défaut
     url: http://prometheus:9090  # URL du serveur Prometheus (vue depuis Grafana)

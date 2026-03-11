@@ -19,6 +19,8 @@ METRICS_DIR="${PROJECT_DIR}/metrics"
 REPORT_DIR="${PROJECT_DIR}/reports"
 mkdir -p "${METRICS_DIR}" "${REPORT_DIR}"
 
+S3_STATUS="skipped"
+
 export RESTIC_PASSWORD_FILE="${PROJECT_DIR}/secrets/restic-password"
 export RESTIC_REPOSITORY="${RESTIC_REPO}"
 
@@ -166,6 +168,7 @@ else
     log "Snapshots disponibles (dépôt MinIO) :"
     RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic snapshots
 
+    S3_STATUS="success"
     log "=== Réplication vers MinIO terminée avec succès ==="
 fi
 
@@ -176,7 +179,13 @@ END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 
 # On récupère les infos du dernier snapshot (nécessite l'outil 'jq')
-# Si jq n'est pas installé : sudo apt install jq
+if ! command -v jq &>/dev/null; then
+    log "WARN: jq non installé — métriques et rapport JSON ignorés."
+    log "      Installer avec : sudo pacman -S jq  (ou apt install jq)"
+    log "=== Sauvegarde complète terminée avec succès ==="
+    exit 0
+fi
+
 SNAPSHOT_ID=$(restic snapshots --json latest | jq -r '.[-1].short_id')
 SNAPSHOT_SIZE=$(restic stats --json latest | jq -r '.total_size')
 
@@ -189,7 +198,7 @@ cat > "${REPORT_DIR}/backup-$(date +%Y%m%d-%H%M%S).json" <<JSONEOF
   "snapshot_id": "${SNAPSHOT_ID}",
   "snapshot_size_bytes": ${SNAPSHOT_SIZE},
   "integrity_check": "passed",
-  "s3_replication": "success"
+  "s3_replication": "${S3_STATUS}"
 }
 JSONEOF
 
