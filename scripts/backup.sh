@@ -124,13 +124,13 @@ else
 
     # --- 7. Copie des snapshots du dépôt local vers MinIO --------------------
     # 'restic copy' transfère uniquement les données manquantes (incrémental).
-    # Nécessite restic >= 0.14. Si erreur, vérifier la version avec : restic version
+    # Depuis restic 0.17, la syntaxe est --from-repo (source) et --repo (destination).
     log "Copie des snapshots vers MinIO..."
     restic copy \
-        --repo         "${RESTIC_REPOSITORY}" \
-        --password-file "${RESTIC_PASSWORD_FILE}" \
-        --to-repo      "${RESTIC_REPO_S3}" \
-        --to-password-file "${RESTIC_PASSWORD_FILE}"
+        --from-repo          "${RESTIC_REPOSITORY}" \
+        --from-password-file "${RESTIC_PASSWORD_FILE}" \
+        --repo               "${RESTIC_REPO_S3}" \
+        --password-file      "${RESTIC_PASSWORD_FILE}"
 
     # --- 8. Politique de rétention sur le dépôt distant ---------------------
     log "Application de la politique de rétention (MinIO)..."
