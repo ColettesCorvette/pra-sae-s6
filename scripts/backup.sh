@@ -8,7 +8,8 @@ set -euo pipefail
 # =============================================================================
 
 # --- Configuration -----------------------------------------------------------
-PROJECT_DIR="/home/thomas/pra-sae"
+# Résout le chemin du projet à partir de l'emplacement du script
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUP_STAGING="/tmp/restic-staging"
 RESTIC_REPO="/mnt/restic-backup/repo"
 export RESTIC_PASSWORD_FILE="${PROJECT_DIR}/secrets/restic-password"
