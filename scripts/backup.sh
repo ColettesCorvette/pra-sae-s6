@@ -95,9 +95,15 @@ DUMP_SIZE=$(du -h "${BACKUP_STAGING}/dumps/${DB_NAME}.sql" | cut -f1)
 log "Dump terminé : ${DUMP_SIZE}"
 
 
-#--- Arret des conteneurs
+#--- Arret des conteneurs (BookStack + supervision pour cohérence des volumes)
 log "Arrêt des conteneurs..."
-docker stop bookstack bookstack_db
+docker stop bookstack bookstack_db 2>/dev/null || true
+if docker ps --format '{{.Names}}' | grep -qE '^(grafana|prometheus|node_exporter|alertmanager)$'; then
+    log "Arrêt de la stack supervision..."
+    cd "${PROJECT_DIR}/supervision"
+    docker compose stop 2>/dev/null || true
+    cd "${PROJECT_DIR}"
+fi
 
 
 # --- 2. Export des volumes Docker en tar -------------------------------------
@@ -140,6 +146,14 @@ restic backup "${BACKUP_STAGING}" \
 log "Redémarage des conteneurs..."
 docker start bookstack_db bookstack
 sleep 5 # attendre que MariaDB soit prête
+
+# Relancer la supervision si elle était active
+if [ -f "${PROJECT_DIR}/supervision/docker-compose.yml" ]; then
+    log "Relance de la stack supervision..."
+    cd "${PROJECT_DIR}/supervision"
+    docker compose start 2>/dev/null || true
+    cd "${PROJECT_DIR}"
+fi
 
 # --- 5. Politique de rétention -----------------------------------------------
 # Étape 2 — exigée par le sujet (§2.3)

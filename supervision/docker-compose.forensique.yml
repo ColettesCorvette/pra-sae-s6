@@ -1,0 +1,62 @@
+# Stack agents d'audit — SAÉ Forensique (projet précédent)
+# Séparé du monitoring PRA pour éviter la confusion
+# Usage : cd supervision/ && docker compose -f docker-compose.forensique.yml up -d
+networks:
+  monitoring: {}
+
+services:
+  agent_a:
+    build: ./agent
+    container_name: agent_a
+    pid: "host"
+    cap_add: ["SYS_ADMIN"]
+    volumes:
+      - "/:/host:ro,rslave"
+    environment:
+      INTERVAL: "10"
+    command: >
+      sh -c "ruby /app/script_final.rb;
+             busybox httpd -f -p 9101 -h /app &
+             while true; do ruby /app/script_final.rb; sleep ${INTERVAL:-10}; done"
+    healthcheck:
+      test: ["CMD-SHELL", "busybox wget -qO- http://localhost:9101/audit.json >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    ports: ["9101:9101"]
+    networks: [monitoring]
+    restart: unless-stopped
+
+  agent_b:
+    build: ./agent
+    container_name: agent_b
+    pid: "host"
+    cap_add: ["SYS_ADMIN"]
+    volumes:
+      - "/:/host:ro,rslave"
+    environment:
+      INTERVAL: "10"
+    command: >
+      sh -c "ruby /app/script_final.rb;
+             busybox httpd -f -p 9102 -h /app &
+             while true; do ruby /app/script_final.rb; sleep ${INTERVAL:-10}; done"
+    healthcheck:
+      test: ["CMD-SHELL", "busybox wget -qO- http://localhost:9102/audit.json >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    ports: ["9102:9102"]
+    networks: [monitoring]
+    restart: unless-stopped
+
+  json_exporter:
+    image: quay.io/prometheuscommunity/json-exporter:v0.7.0
+    command: ["--config.file=/config.yml","--log.level=debug"]
+    volumes:
+      - ./json_exporter/config.yml:/config.yml:ro
+    ports: ["7979:7979"]
+    depends_on: [agent_a, agent_b]
+    networks: [monitoring]
+    restart: unless-stopped

@@ -22,7 +22,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 # --- Vérifications préalables ------------------------------------------------
 if [ ! -f "${MINIO_CREDS}" ]; then
     echo "ERREUR : ${MINIO_CREDS} introuvable."
-    echo "  → Copier secrets/minio-credentials.example → secrets/minio-credentials"
+    echo "  → Copier minio/minio-credentials.example → secrets/minio-credentials"
     echo "    et renseigner les valeurs (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY)."
     exit 1
 fi

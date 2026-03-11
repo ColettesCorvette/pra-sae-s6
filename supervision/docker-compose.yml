@@ -1,73 +1,12 @@
-# Fichier Docker Compose (format "compose spec" sans champ version)
+# Stack de supervision PRA — monitoring des sauvegardes
+# Usage : cd supervision/ && docker compose up -d
 networks:
-  monitoring: {}          # Réseau Docker dédié à la stack de supervision
+  monitoring: {}
 
 volumes:
-  grafana-data: {}        # Volume persistant pour les données Grafana (config, dashboards, etc.)
+  grafana-data: {}
 
 services:
-  agent_a:
-    build: ./agent        # Construit l'image à partir du Dockerfile dans ./agent
-    container_name: agent_a
-    pid: "host"           # Partage l'espace PID avec l'hôte (pour voir les processus du host)
-    cap_add: ["SYS_ADMIN"] # Capacité supplémentaire pour certaines opérations système
-    volumes:
-      - "/:/host:ro,rslave" # Monte la racine du host en lecture seule dans /host
-    environment:
-      INTERVAL: "10"        # Intervalle (en secondes) entre deux audits
-      # 1) Lance une première fois le script d'audit
-      # 2) Démarre un petit serveur HTTP BusyBox sur le port 9101 (sert audit.json)
-      # 3) Boucle infinie : relance régulièrement le script Ruby toutes les INTERVAL secondes
-    command: >
-      sh -c "ruby /app/script_final.rb;
-             busybox httpd -f -p 9101 -h /app &
-             while true; do ruby /app/script_final.rb; sleep ${INTERVAL:-10}; done"
-    healthcheck:
-      test: ["CMD-SHELL", "busybox wget -qO- http://localhost:9101/audit.json >/dev/null 2>&1 || exit 1"]
-      # Vérifie que le fichier JSON est bien servi par le serveur HTTP de l’agent
-      interval: 10s        # Fréquence du healthcheck
-      timeout: 3s          # Délai max pour la commande
-      retries: 10          # Nombre de tentatives avant de considérer le conteneur comme unhealthy
-      start_period: 10s    # Laisse un peu de temps au service pour démarrer avant de checker
-    ports: ["9101:9101"]   # Expose le port HTTP de l’agent sur la machine hôte
-    networks: [monitoring] # Connecte l’agent au réseau de supervision
-    restart: unless-stopped # Redémarre automatiquement sauf arrêt manuel
-
-  agent_b:
-    build: ./agent
-    container_name: agent_b
-    pid: "host"
-    cap_add: ["SYS_ADMIN"]
-    volumes:
-      - "/:/host:ro,rslave"
-    environment:
-      INTERVAL: "10"
-    command: >  # Même principe que agent_a, mais écoute sur le port 9102
-      sh -c "ruby /app/script_final.rb;
-             busybox httpd -f -p 9102 -h /app &
-             while true; do ruby /app/script_final.rb; sleep ${INTERVAL:-10}; done"
-    healthcheck:
-      test: ["CMD-SHELL", "busybox wget -qO- http://localhost:9102/audit.json >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-    ports: ["9102:9102"]
-    networks: [monitoring]
-    restart: unless-stopped
-
-  json_exporter:
-    image: quay.io/prometheuscommunity/json-exporter:v0.7.0
-    command: ["--config.file=/config.yml","--log.level=debug"]
-    # Lance json_exporter avec ton fichier de config et un niveau de log détaillé
-    volumes:
-      - ./json_exporter/config.yml:/config.yml:ro  # Monte la config de l’exporter en lecture seule
-    ports: ["7979:7979"]                           # Expose l’endpoint /metrics de json_exporter
-    depends_on: [agent_a, agent_b]                 # Attend que les agents soient démarrés
-    networks: [monitoring]
-    restart: unless-stopped
-
-  
   node_exporter:
     image: prom/node-exporter:latest
     container_name: node_exporter
@@ -79,7 +18,6 @@ services:
     ports: ["9100:9100"]
     networks: [monitoring]
     restart: unless-stopped
-
 
   alertmanager:
     image: prom/alertmanager:latest
@@ -95,25 +33,22 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
-      # Utilise ton fichier de configuration Prometheus
-    ports: ["9090:9090"]           # Interface web et endpoint API de Prometheus
-    depends_on: [json_exporter]    # Démarre après json_exporter (qui fournit les métriques)
+    ports: ["9090:9090"]
+    depends_on: [node_exporter]
     networks: [monitoring]
     restart: unless-stopped
 
   grafana:
     image: grafana/grafana-oss:latest
     environment:
-      GF_SECURITY_ADMIN_USER: admin      # Login admin initial
-      GF_SECURITY_ADMIN_PASSWORD: admin  # Mot de passe admin initial
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
-      # Indique à Grafana où trouver les datasources/dashboards provisionnés
     volumes:
-      - grafana-data:/var/lib/grafana                    # Données persistantes Grafana
+      - grafana-data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-      # Provisioning automatique des datasources et dashboards
-    ports: ["3000:3000"]          # Interface web Grafana
-    depends_on: [prometheus]      # Démarre après Prometheus
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
     networks: [monitoring]
     restart: unless-stopped

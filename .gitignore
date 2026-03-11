@@ -6,5 +6,6 @@ minio/.env
 # Loop device image
 *.img
 
-#ignore les backups
+# Fichiers générés par backup.sh (rapports JSON + métriques Prometheus)
 reports/*
+metrics/*
