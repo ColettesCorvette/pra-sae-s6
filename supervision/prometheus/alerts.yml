@@ -1,0 +1,22 @@
+groups:
+  - name: backup_alerts
+    rules:
+
+      - alert: BackupTooOld
+        expr: (time() - backup_last_success_timestamp) > 25*3600
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Aucune sauvegarde réussie depuis 25h"
+          description: "La dernière sauvegarde de {{ $value | humanizeDuration }} ago."
+
+          
+      - alert: BackupIntegrityFailed
+        expr: backup_integrity_status != 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Échec de la vérification d'intégrité Restic"
+          description: "Le dernier restic check a échoué"

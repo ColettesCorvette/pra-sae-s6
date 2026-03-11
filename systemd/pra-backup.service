@@ -1,0 +1,10 @@
+[Unit]
+Description=PRA Backup - Sauvegarde BookStack + réplication MinIO
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=alex
+ExecStart=/home/alex/Documents/SAE/pre-sae-s6/pra-sae-s6/scripts/backup.sh
+Environment=HOME=/home/alex

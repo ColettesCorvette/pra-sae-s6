@@ -2,6 +2,17 @@ global:
   scrape_interval: 15s          # Fréquence par défaut de scrute (toutes les 15 s)
   evaluation_interval: 15s      # Fréquence d’évaluation des règles (si tu en ajoutes plus tard)
 
+
+rule_files:
+  - "alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+
 scrape_configs:
   # 1) Scrute les agents via json_exporter /probe (pattern "multi-target")
   - job_name: 'json_agents'
@@ -33,3 +44,8 @@ scrape_configs:
   - job_name: 'json_exporter'
     static_configs:
       - targets: ['json_exporter:7979']   # Scrute directement /metrics du json_exporter
+
+  # 3) Scrute le Node Exporter (Métriques du backup PRA via textfile)
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['node_exporter:9100']

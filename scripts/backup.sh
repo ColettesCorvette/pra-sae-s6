@@ -12,6 +12,13 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BACKUP_STAGING="/tmp/restic-staging"
 RESTIC_REPO="/mnt/restic-backup/repo"
+
+# prometheus
+START_TIME=$(date +%s)
+METRICS_DIR="${PROJECT_DIR}/metrics"
+REPORT_DIR="${PROJECT_DIR}/reports"
+mkdir -p "${METRICS_DIR}" "${REPORT_DIR}"
+
 export RESTIC_PASSWORD_FILE="${PROJECT_DIR}/secrets/restic-password"
 export RESTIC_REPOSITORY="${RESTIC_REPO}"
 
@@ -55,6 +62,12 @@ docker exec "${DB_CONTAINER}" \
 DUMP_SIZE=$(du -h "${BACKUP_STAGING}/dumps/${DB_NAME}.sql" | cut -f1)
 log "Dump terminé : ${DUMP_SIZE}"
 
+
+#--- Arret des conteneurs
+log "Arrêt des conteneurs..."
+docker stop bookstack bookstack_db
+
+
 # --- 2. Export des volumes Docker en tar -------------------------------------
 # Les fichiers dans les volumes appartiennent à root (UID 0 dans le conteneur).
 # On les exporte en tar depuis un conteneur Alpine pour éviter les problèmes
@@ -90,6 +103,11 @@ log "Lancement de restic backup..."
 restic backup "${BACKUP_STAGING}" \
     --tag bookstack --tag mariadb --tag config \
     --verbose
+
+#--- Redémarage des conteneurs
+log "Redémarage des conteneurs..."
+docker start bookstack_db bookstack
+sleep 5 # attendre que MariaDB soit prête
 
 # --- 5. Politique de rétention -----------------------------------------------
 # Étape 2 — exigée par le sujet (§2.3)
@@ -150,5 +168,49 @@ else
 
     log "=== Réplication vers MinIO terminée avec succès ==="
 fi
+
+# --- . Génération du rapport JSON et des métriques (Étape 4) ---------------
+log "Génération des rapports et métriques..."
+
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+# On récupère les infos du dernier snapshot (nécessite l'outil 'jq')
+# Si jq n'est pas installé : sudo apt install jq
+SNAPSHOT_ID=$(restic snapshots --json latest | jq -r '.[-1].short_id')
+SNAPSHOT_SIZE=$(restic stats --json latest | jq -r '.total_size')
+
+# Création du rapport JSON (Étape 1.g du guide)
+cat > "${REPORT_DIR}/backup-$(date +%Y%m%d-%H%M%S).json" <<JSONEOF
+{
+  "date": "$(date -Iseconds)",
+  "status": "success",
+  "duration_seconds": ${DURATION},
+  "snapshot_id": "${SNAPSHOT_ID}",
+  "snapshot_size_bytes": ${SNAPSHOT_SIZE},
+  "integrity_check": "passed",
+  "s3_replication": "success"
+}
+JSONEOF
+
+# --- . Écriture des métriques pour Prometheus (Etape 3.b du guide) ---
+log "Écriture des métriques pour node_exporter..."
+cat > "${METRICS_DIR}/backup.prom" <<PROMEOF
+# HELP backup_last_success_timestamp Horodatage de la dernière sauvegarde réussie
+# TYPE backup_last_success_timestamp gauge
+backup_last_success_timestamp $(date +%s)
+
+# HELP backup_duration_seconds Durée de la dernière sauvegarde en secondes
+# TYPE backup_duration_seconds gauge
+backup_duration_seconds ${DURATION}
+
+# HELP backup_snapshot_size_bytes Taille du dernier snapshot en octets
+# TYPE backup_snapshot_size_bytes gauge
+backup_snapshot_size_bytes ${SNAPSHOT_SIZE}
+
+# HELP backup_integrity_status Statut de la vérification d'intégrité (0=OK, 1=erreur)
+# TYPE backup_integrity_status gauge
+backup_integrity_status 0
+PROMEOF
 
 log "=== Sauvegarde complète terminée avec succès ==="

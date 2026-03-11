@@ -1,0 +1,13 @@
+[Unit]
+Description=Lancement quotidien du backup PRA à 02h00
+
+[Timer]
+# Tous les jours à 2h du matin
+OnCalendar=*-*-* 02:00:00
+# Si le PC était éteint à 2h, il lance le backup au démarrage
+Persistent=true
+# Ajoute un petit délai aléatoire pour ne pas surcharger le CPU pile à 2h
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

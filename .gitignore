@@ -5,3 +5,6 @@ minio/.env
 
 # Loop device image
 *.img
+
+#ignore les backups
+reports/*
