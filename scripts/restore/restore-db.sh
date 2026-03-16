@@ -6,7 +6,7 @@ set -euo pipefail
 # Restaure le dump SQL depuis le dernier snapshot Restic
 # =============================================================================
 
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 RESTORE_DIR="/tmp/restic-restore"
 export RESTIC_PASSWORD_FILE="${PROJECT_DIR}/secrets/restic-password"
 export RESTIC_REPOSITORY="/mnt/restic-backup/repo"

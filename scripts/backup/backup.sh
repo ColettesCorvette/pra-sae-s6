@@ -9,7 +9,7 @@ set -euo pipefail
 
 # --- Configuration -----------------------------------------------------------
 # Résout le chemin du projet à partir de l'emplacement du script
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 BACKUP_STAGING="/tmp/restic-staging"
 RESTIC_REPO="/mnt/restic-backup/repo"
 

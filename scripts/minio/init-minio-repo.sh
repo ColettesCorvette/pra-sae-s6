@@ -11,7 +11,7 @@ set -euo pipefail
 #   - Le fichier secrets/restic-password doit exister (dépôt local déjà init)
 # =============================================================================
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MINIO_CREDS="${PROJECT_DIR}/secrets/minio-credentials"
 MINIO_URL="http://localhost:9000"
 BUCKET_NAME="restic-backup"
@@ -82,7 +82,7 @@ fi
 log ""
 log "=== Initialisation terminée ==="
 log "Prochaines étapes :"
-log "  1. Lancer une sauvegarde complète : bash scripts/backup.sh"
+log "  1. Lancer une sauvegarde complète : bash scripts/backup/backup.sh"
 log "  2. Vérifier depuis la console MinIO : http://localhost:9001"
 log "     (login : valeurs de secrets/minio-credentials)"
 log "  3. Ou vérifier via Restic :"

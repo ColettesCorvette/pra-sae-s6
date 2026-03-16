@@ -47,5 +47,5 @@ export RESTIC_PASSWORD_FILE=secrets/restic-password
 restic init --repo /mnt/restic-backup/repo
 
 # 4. Lancer une sauvegarde
-bash scripts/backup.sh
+bash scripts/backup/backup.sh
 ```

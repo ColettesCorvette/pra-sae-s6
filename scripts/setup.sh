@@ -227,7 +227,7 @@ print_summary() {
     echo "  BookStack      : http://localhost:6875"
     echo "  MinIO console  : http://localhost:9001"
     echo ""
-    echo "  Prochaine étape : bash scripts/backup.sh"
+    echo "  Prochaine étape : bash scripts/backup/backup.sh"
     echo ""
 }
 

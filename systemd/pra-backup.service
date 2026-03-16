@@ -7,7 +7,7 @@ Requires=docker.service
 Type=oneshot
 # Adapter WorkingDirectory au chemin réel du dépôt sur la machine de déploiement
 WorkingDirectory=/opt/pra-sae-s6
-ExecStart=/opt/pra-sae-s6/scripts/backup.sh
+ExecStart=/opt/pra-sae-s6/scripts/backup/backup.sh
 # Les logs sont capturés dans journald : journalctl -u pra-backup.service
 StandardOutput=journal
 StandardError=journal
