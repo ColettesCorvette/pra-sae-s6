@@ -106,7 +106,7 @@ La **règle 3-2-1** est le principe directeur de notre stratégie :
                               ▼
                  ┌────────────────────────┐
                  │   Stockage objet S3    │
-                 │   (MinIO ou cloud)     │
+                 │          MinIO         │
                  │   Copie 3 — hors site  │
                  └────────────────────────┘
 ```
