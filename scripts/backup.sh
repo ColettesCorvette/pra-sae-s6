@@ -86,14 +86,9 @@ mkdir -p "${BACKUP_STAGING}/config"
 
 # --- 1. Dump de la base MariaDB ---------------------------------------------
 log "Dump de la base MariaDB (${DB_NAME})..."
-docker exec "${DB_CONTAINER}" \
-    mariadb-dump -u"${DB_USER}" -p"${DB_PASS}" \
-    --single-transaction --routines --triggers \
-    "${DB_NAME}" > "${BACKUP_STAGING}/dumps/${DB_NAME}.sql" 2>/dev/null
-
+docker exec "${DB_CONTAINER}" mariadb-dump -u"${DB_USER}" -p"${DB_PASS}" --single-transaction --routines --triggers "${DB_NAME}" > "${BACKUP_STAGING}/dumps/${DB_NAME}.sql" 2>/dev/null
 DUMP_SIZE=$(du -h "${BACKUP_STAGING}/dumps/${DB_NAME}.sql" | cut -f1)
 log "Dump terminé : ${DUMP_SIZE}"
-
 
 #--- Arret des conteneurs (BookStack + supervision pour cohérence des volumes)
 log "Arrêt des conteneurs..."
@@ -105,23 +100,17 @@ if docker ps --format '{{.Names}}' | grep -qE '^(grafana|prometheus|node_exporte
     cd "${PROJECT_DIR}"
 fi
 
-
 # --- 2. Export des volumes Docker en tar -------------------------------------
 # Les fichiers dans les volumes appartiennent à root (UID 0 dans le conteneur).
 # On les exporte en tar depuis un conteneur Alpine pour éviter les problèmes
 # de permissions côté host. Restic sauvegardera les archives tar.
 log "Export du volume BookStack (bookstack_data)..."
-docker run --rm \
-    -v bookstack_bookstack_data:/source:ro \
-    -v "${BACKUP_STAGING}/volumes":/backup \
-    alpine tar czf /backup/bookstack_data.tar.gz -C /source .
+docker run --rm -v bookstack_bookstack_data:/source:ro -v "${BACKUP_STAGING}/volumes":/backup alpine tar czf /backup/bookstack_data.tar.gz -C /source .
 
 log "Export du volume Grafana (grafana_data)..."
+
 if docker volume inspect supervision_grafana-data >/dev/null 2>&1; then
-    docker run --rm \
-        -v supervision_grafana-data:/source:ro \
-        -v "${BACKUP_STAGING}/volumes":/backup \
-        alpine tar czf /backup/grafana_data.tar.gz -C /source .
+    docker run --rm -v supervision_grafana-data:/source:ro -v "${BACKUP_STAGING}/volumes":/backup alpine tar czf /backup/grafana_data.tar.gz -C /source .
 else
     log "WARN: Volume grafana-data introuvable, skip."
 fi
@@ -132,15 +121,12 @@ cp "${PROJECT_DIR}/bookstack/.env" "${BACKUP_STAGING}/config/bookstack.env"
 cp "${PROJECT_DIR}/bookstack/docker-compose.yml" "${BACKUP_STAGING}/config/bookstack-compose.yml"
 
 if [ -f "${PROJECT_DIR}/supervision/docker-compose.yml" ]; then
-    cp "${PROJECT_DIR}/supervision/docker-compose.yml" \
-       "${BACKUP_STAGING}/config/supervision-compose.yml"
+    cp "${PROJECT_DIR}/supervision/docker-compose.yml" "${BACKUP_STAGING}/config/supervision-compose.yml"
 fi
 
 # --- 4. Sauvegarde Restic ----------------------------------------------------
 log "Lancement de restic backup..."
-restic backup "${BACKUP_STAGING}" \
-    --tag bookstack --tag mariadb --tag config \
-    --verbose
+restic backup "${BACKUP_STAGING}" --tag bookstack --tag mariadb --tag config --verbose
 
 #--- Redémarage des conteneurs
 log "Redémarage des conteneurs..."
@@ -158,11 +144,7 @@ fi
 # --- 5. Politique de rétention -----------------------------------------------
 # Étape 2 — exigée par le sujet (§2.3)
 log "Application de la politique de rétention (local)..."
-restic forget \
-    --keep-daily   7 \
-    --keep-weekly  4 \
-    --keep-monthly 12 \
-    --prune
+restic forget --keep-daily   7 --keep-weekly  4 --keep-monthly 12 --prune
 
 # --- 6. Vérification de l'intégrité (local) ----------------------------------
 log "Vérification de l'intégrité du dépôt local..."
@@ -191,19 +173,11 @@ else
     # 'restic copy' transfère uniquement les données manquantes (incrémental).
     # Depuis restic 0.17, la syntaxe est --from-repo (source) et --repo (destination).
     log "Copie des snapshots vers MinIO..."
-    restic copy \
-        --from-repo          "${RESTIC_REPOSITORY}" \
-        --from-password-file "${RESTIC_PASSWORD_FILE}" \
-        --repo               "${RESTIC_REPO_S3}" \
-        --password-file      "${RESTIC_PASSWORD_FILE}"
+    restic copy --from-repo "${RESTIC_REPOSITORY}" --from-password-file "${RESTIC_PASSWORD_FILE}" --repo "${RESTIC_REPO_S3}" --password-file "${RESTIC_PASSWORD_FILE}"
 
     # --- 8. Politique de rétention sur le dépôt distant ---------------------
     log "Application de la politique de rétention (MinIO)..."
-    RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic forget \
-        --keep-daily   7 \
-        --keep-weekly  4 \
-        --keep-monthly 12 \
-        --prune
+    RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
 
     # --- 9. Vérification de l'intégrité du dépôt distant --------------------
     log "Vérification de l'intégrité du dépôt MinIO..."
