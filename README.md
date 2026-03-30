@@ -8,44 +8,43 @@ Solution de sauvegarde et de reprise d'activité pour une infrastructure de serv
 
 ```
 pra-sae/
-├── bookstack/              # Docker Compose + config de BookStack (service à protéger)
-├── supervision/            # Stack Prometheus/Grafana (service à protéger)
-├── minio/                  # Stack MinIO — stockage objet S3 (étape 3)
-│   ├── docker-compose.yml
-│   └── .env.example
+├── bookstack/                  # Service à protéger (BookStack + MariaDB)
+├── minio/                      # Stockage objet S3 auto-hébergé
+├── supervision/                # Prometheus, Grafana, Alertmanager, node_exporter
+├── systemd/                    # Timer + service pour planification automatique
 ├── scripts/
-│   ├── backup.sh           # Script de sauvegarde locale + réplication S3 (étapes 2 & 3)
-│   └── init-minio-repo.sh  # Initialisation one-shot du bucket et du dépôt Restic S3
-├── secrets/                # Mots de passe Restic, credentials MinIO (gitignored)
-│   ├── minio-credentials.example
-│   └── restic-password     # gitignored — à créer manuellement
-└── docs/
-    ├── 01-analyse-strategie.md        # Étape 1 — Inventaire, RPO/RTO, règle 3-2-1
-    ├── 01-analyse-strategie.txt       # Idem en texte brut
-    ├── 03-externalisation-guide.txt   # Notes d'orientation (étape 3)
-    └── 03-externalisation.md          # Documentation complète de l'étape 3
+│   ├── setup.sh                # Initialisation complète de l'environnement
+│   ├── backup/
+│   │   └── backup.sh           # Sauvegarde locale + réplication MinIO
+│   ├── minio/
+│   │   └── init-minio-repo.sh  # Initialisation du bucket et dépôt Restic S3
+│   └── restore/
+│       ├── restore-file.sh     # Scénario 1 — restauration partielle
+│       ├── restore-db.sh       # Scénario 2 — restauration BDD
+│       ├── restore-full.sh     # Scénario 3 — restauration complète
+│       └── restore-ransomware.sh # Scénario 4 — restauration depuis MinIO
+├── secrets/                    # Gitignored (mots de passe, credentials)
+├── metrics/                    # Gitignored (métriques Prometheus générées)
+├── reports/                    # Gitignored (rapports JSON générés)
+└── docs/                       # Analyse, stratégie, documentation
 ```
 
 ## Démarrage rapide
 
 ```bash
-# 1. Lancer BookStack
-cd bookstack/
-cp .env.example .env
-# Renseigner APP_KEY, DB_PASS, DB_ROOT_PASS
-docker compose up -d
+# Setup automatisé (loop device, Restic, BookStack, MinIO)
+sudo bash scripts/setup.sh
 
-# 2. Monter le loop device (simulé disque de sauvegarde)
-sudo dd if=/dev/zero of=/opt/restic-disk.img bs=1M count=2048
-sudo mkfs.ext4 /opt/restic-disk.img
-sudo mkdir -p /mnt/restic-backup
+# Ou manuellement :
+cd bookstack/ && cp .env.example .env && docker compose up -d
 sudo mount -o loop /opt/restic-disk.img /mnt/restic-backup
-sudo chown $USER:$USER /mnt/restic-backup
 
-# 3. Initialiser le dépôt Restic
-export RESTIC_PASSWORD_FILE=secrets/restic-password
-restic init --repo /mnt/restic-backup/repo
-
-# 4. Lancer une sauvegarde
+# Lancer une sauvegarde
 bash scripts/backup/backup.sh
+
+# Restauration
+bash scripts/restore/restore-file.sh config/bookstack.env  # fichier
+bash scripts/restore/restore-db.sh                          # base de données
+bash scripts/restore/restore-full.sh                        # complète
+bash scripts/restore/restore-ransomware.sh                  # depuis MinIO
 ```
