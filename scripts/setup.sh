@@ -307,6 +307,20 @@ setup_minio() {
     else
         log "MinIO déjà en cours d'exécution. Skip."
     fi
+
+    # Attendre que MinIO soit prêt puis initialiser le bucket + dépôt Restic S3
+    local init_script="${PROJECT_DIR}/scripts/minio/init-minio-repo.sh"
+    if [ -f "${init_script}" ]; then
+        log "Attente que MinIO soit prêt..."
+        for i in $(seq 1 15); do
+            if curl -sf "http://localhost:9000/minio/health/ready" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 2
+        done
+        REAL_USER="${SUDO_USER:-$(whoami)}"
+        su - "${REAL_USER}" -c "bash '${init_script}'"
+    fi
 }
 
 # --- Résumé ------------------------------------------------------------------
