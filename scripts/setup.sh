@@ -5,11 +5,13 @@ set -euo pipefail
 # Script de setup initial — PRA SAÉ S6
 #
 # Prépare l'environnement complet en une seule commande :
-#   1. Loop device (disque de sauvegarde simulé)
-#   2. Dépôt Restic local
-#   3. BookStack (génération APP_KEY, .env, lancement)
-#   4. MinIO (si credentials présents)
+#   1. Installation des dépendances (Docker, Restic, jq)
+#   2. Loop device (disque de sauvegarde simulé)
+#   3. Dépôt Restic local
+#   4. BookStack (génération APP_KEY, .env, lancement)
+#   5. MinIO (si credentials présents)
 #
+# Compatible : Arch Linux, Debian/Ubuntu, Fedora/RHEL
 # Usage : sudo bash scripts/setup.sh
 # =============================================================================
 
@@ -30,26 +32,109 @@ log()  { echo -e "${GREEN}[SETUP]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# --- Vérification des prérequis ----------------------------------------------
-check_prereqs() {
-    log "Vérification des prérequis..."
-    local missing=()
+# --- Détection de la distribution ---------------------------------------------
+detect_distro() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        DISTRO_ID="${ID}"
+        DISTRO_FAMILY="${ID_LIKE:-${ID}}"
+    else
+        DISTRO_ID="unknown"
+        DISTRO_FAMILY="unknown"
+    fi
+    log "Distribution détectée : ${DISTRO_ID}"
+}
 
-    command -v docker  >/dev/null 2>&1 || missing+=("docker")
-    command -v restic  >/dev/null 2>&1 || missing+=("restic")
+# --- Gestionnaire de paquets --------------------------------------------------
+pkg_install() {
+    local packages=("$@")
+    case "${DISTRO_ID}" in
+        arch|manjaro|endeavouros|garuda)
+            pacman -S --needed --noconfirm "${packages[@]}"
+            ;;
+        debian|ubuntu|linuxmint|pop)
+            apt-get update -qq
+            apt-get install -y "${packages[@]}"
+            ;;
+        fedora)
+            dnf install -y "${packages[@]}"
+            ;;
+        rhel|centos|rocky|almalinux)
+            # Restic n'est pas dans les dépôts RHEL par défaut
+            yum install -y epel-release 2>/dev/null || true
+            yum install -y "${packages[@]}"
+            ;;
+        opensuse*|sles)
+            zypper install -y "${packages[@]}"
+            ;;
+        *)
+            err "Distribution '${DISTRO_ID}' non reconnue."
+            err "Installer manuellement : ${packages[*]}"
+            exit 1
+            ;;
+    esac
+}
 
-    if [ ${#missing[@]} -gt 0 ]; then
-        err "Paquets manquants : ${missing[*]}"
-        err "Installer avec : sudo pacman -S ${missing[*]}"
-        exit 1
+# --- Installation des prérequis -----------------------------------------------
+install_prereqs() {
+    log "=== Vérification et installation des prérequis ==="
+    local to_install=()
+
+    # Docker
+    if ! command -v docker &>/dev/null; then
+        log "Docker non trouvé, installation..."
+        case "${DISTRO_ID}" in
+            arch|manjaro|endeavouros|garuda)
+                to_install+=("docker" "docker-compose")
+                ;;
+            debian|ubuntu|linuxmint|pop)
+                to_install+=("docker.io" "docker-compose-plugin")
+                ;;
+            fedora)
+                to_install+=("docker" "docker-compose-plugin")
+                ;;
+            rhel|centos|rocky|almalinux)
+                to_install+=("docker" "docker-compose-plugin")
+                ;;
+            *)
+                err "Installer Docker manuellement : https://docs.docker.com/engine/install/"
+                exit 1
+                ;;
+        esac
     fi
 
-    if ! docker info >/dev/null 2>&1; then
-        err "Docker n'est pas démarré. Lancer : sudo systemctl start docker"
-        exit 1
+    # Restic
+    if ! command -v restic &>/dev/null; then
+        log "Restic non trouvé, installation..."
+        to_install+=("restic")
     fi
 
-    log "Prérequis OK (docker, restic)"
+    # jq (nécessaire pour les rapports JSON)
+    if ! command -v jq &>/dev/null; then
+        log "jq non trouvé, installation..."
+        to_install+=("jq")
+    fi
+
+    if [ ${#to_install[@]} -gt 0 ]; then
+        log "Installation de : ${to_install[*]}"
+        pkg_install "${to_install[@]}"
+    fi
+
+    # Activer et démarrer Docker si nécessaire
+    if ! docker info &>/dev/null; then
+        log "Démarrage de Docker..."
+        systemctl enable --now docker
+        # Ajouter l'utilisateur au groupe docker
+        REAL_USER="${SUDO_USER:-$(whoami)}"
+        if ! groups "${REAL_USER}" | grep -q docker; then
+            usermod -aG docker "${REAL_USER}"
+            warn "Utilisateur ${REAL_USER} ajouté au groupe docker."
+            warn "Déconnectez-vous et reconnectez-vous pour que ça prenne effet,"
+            warn "ou lancez : newgrp docker"
+        fi
+    fi
+
+    log "Prérequis OK (docker, restic, jq)"
 }
 
 # --- Loop device -------------------------------------------------------------
@@ -204,6 +289,16 @@ setup_minio() {
         fi
     fi
 
+    # Créer les credentials Restic pour MinIO si absents
+    local creds_file="${PROJECT_DIR}/secrets/minio-credentials"
+    if [ ! -f "${creds_file}" ] && [ -f "${minio_dir}/minio-credentials.example" ]; then
+        cp "${minio_dir}/minio-credentials.example" "${creds_file}"
+        REAL_USER="${SUDO_USER:-$(whoami)}"
+        chown "${REAL_USER}:${REAL_USER}" "${creds_file}"
+        chmod 600 "${creds_file}"
+        log "Credentials MinIO créés depuis le template (pensez à personnaliser secrets/minio-credentials)"
+    fi
+
     # Lancer MinIO si pas déjà en cours
     if ! docker ps --format '{{.Names}}' | grep -q '^minio$'; then
         REAL_USER="${SUDO_USER:-$(whoami)}"
@@ -239,7 +334,8 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-check_prereqs
+detect_distro
+install_prereqs
 setup_loop_device
 setup_restic_password
 setup_restic_repo

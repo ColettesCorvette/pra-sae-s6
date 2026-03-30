@@ -32,19 +32,21 @@ pra-sae/
 ## Démarrage rapide
 
 ```bash
-# Setup automatisé (loop device, Restic, BookStack, MinIO)
+# 1. Setup complet (installe les dépendances, crée le loop device, lance BookStack + MinIO)
 sudo bash scripts/setup.sh
 
-# Ou manuellement :
-cd bookstack/ && cp .env.example .env && docker compose up -d
-sudo mount -o loop /opt/restic-disk.img /mnt/restic-backup
+# 2. Initialiser le dépôt Restic sur MinIO
+bash scripts/minio/init-minio-repo.sh
 
-# Lancer une sauvegarde
+# 3. Lancer une sauvegarde (locale + réplication MinIO)
 bash scripts/backup/backup.sh
+```
 
-# Restauration
-bash scripts/restore/restore-file.sh config/bookstack.env  # fichier
+## Restauration
+
+```bash
+bash scripts/restore/restore-file.sh config/bookstack.env  # fichier spécifique
 bash scripts/restore/restore-db.sh                          # base de données
-bash scripts/restore/restore-full.sh                        # complète
-bash scripts/restore/restore-ransomware.sh                  # depuis MinIO
+bash scripts/restore/restore-full.sh                        # service complet
+bash scripts/restore/restore-ransomware.sh                  # depuis MinIO (repo local corrompu)
 ```
