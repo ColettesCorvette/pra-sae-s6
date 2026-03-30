@@ -12,7 +12,7 @@ set -euo pipefail
 #   5. MinIO (si credentials présents)
 #
 # Compatible : Arch Linux, Debian/Ubuntu, Fedora/RHEL
-# Usage : sudo bash scripts/setup.sh
+# Usage : sudo ./scripts/setup.sh
 # =============================================================================
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -319,7 +319,7 @@ setup_minio() {
             sleep 2
         done
         REAL_USER="${SUDO_USER:-$(whoami)}"
-        su - "${REAL_USER}" -c "bash '${init_script}'"
+        su - "${REAL_USER}" -c "'${init_script}'"
     fi
 }
 
@@ -336,7 +336,7 @@ print_summary() {
     echo "  BookStack      : http://localhost:6875"
     echo "  MinIO console  : http://localhost:9001"
     echo ""
-    echo "  Prochaine étape : bash scripts/backup/backup.sh"
+    echo "  Prochaine étape : ./scripts/backup/backup.sh"
     echo ""
 }
 
@@ -344,7 +344,7 @@ print_summary() {
 
 if [ "$(id -u)" -ne 0 ]; then
     err "Ce script doit être lancé avec sudo."
-    err "Usage : sudo bash scripts/setup.sh"
+    err "Usage : sudo ./scripts/setup.sh"
     exit 1
 fi
 

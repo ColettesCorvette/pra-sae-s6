@@ -82,7 +82,7 @@ fi
 log ""
 log "=== Initialisation terminée ==="
 log "Prochaines étapes :"
-log "  1. Lancer une sauvegarde complète : bash scripts/backup/backup.sh"
+log "  1. Lancer une sauvegarde complète : ./scripts/backup/backup.sh"
 log "  2. Vérifier depuis la console MinIO : http://localhost:9001"
 log "     (login : valeurs de secrets/minio-credentials)"
 log "  3. Ou vérifier via Restic :"

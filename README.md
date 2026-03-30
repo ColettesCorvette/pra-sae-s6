@@ -33,20 +33,17 @@ pra-sae/
 
 ```bash
 # 1. Setup complet (installe les dépendances, crée le loop device, lance BookStack + MinIO)
-sudo bash scripts/setup.sh
+sudo ./scripts/setup.sh
 
-# 2. Initialiser le dépôt Restic sur MinIO
-bash scripts/minio/init-minio-repo.sh
-
-# 3. Lancer une sauvegarde (locale + réplication MinIO)
-bash scripts/backup/backup.sh
+# 2. Lancer une sauvegarde (locale + réplication MinIO)
+./scripts/backup/backup.sh
 ```
 
 ## Restauration
 
 ```bash
-bash scripts/restore/restore-file.sh config/bookstack.env  # fichier spécifique
-bash scripts/restore/restore-db.sh                          # base de données
-bash scripts/restore/restore-full.sh                        # service complet
-bash scripts/restore/restore-ransomware.sh                  # depuis MinIO (repo local corrompu)
+./scripts/restore/restore-file.sh config/bookstack.env  # fichier spécifique
+./scripts/restore/restore-db.sh                          # base de données
+./scripts/restore/restore-full.sh                        # service complet
+./scripts/restore/restore-ransomware.sh                  # depuis MinIO (repo local corrompu)
 ```
