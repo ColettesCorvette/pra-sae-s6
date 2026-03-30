@@ -88,7 +88,7 @@ install_prereqs() {
                 to_install+=("docker" "docker-compose")
                 ;;
             debian|ubuntu|linuxmint|pop)
-                to_install+=("docker.io" "docker-compose-plugin")
+                to_install+=("docker.io" "docker-compose")
                 ;;
             fedora)
                 to_install+=("docker" "docker-compose-plugin")
