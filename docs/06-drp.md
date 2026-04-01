@@ -1,329 +1,238 @@
-# Étape 6 — Disaster Recovery Plan (DRP)
+# Disaster Recovery Plan (DRP)
 
-> SAÉ S6.B.01 — BUT Informatique 3A, parcours DACS — Mars 2026
-
----
-
-## Table des matières
-
-1. [Objectif et périmètre](#1-objectif-et-périmètre)
-2. [Architecture globale et dépendances](#2-architecture-globale-et-dépendances)
-3. [Tableau RPO / RTO — Théorique vs Mesuré](#3-tableau-rpo--rto--théorique-vs-mesuré)
-4. [Procédures de reprise d'activité](#4-procédures-de-reprise-dactivité)
-   - [Scénario 1 — Panne disque](#41-scénario-1--panne-disque)
-   - [Scénario 2 — Suppression accidentelle](#42-scénario-2--suppression-accidentelle-dun-volume-docker)
-   - [Scénario 3 — Ransomware](#43-scénario-3--ransomware)
-5. [Checklist de validation post-reprise](#5-checklist-de-validation-post-reprise)
-6. [Contacts et responsabilités](#6-contacts-et-responsabilités)
+> SAE S6.B.01 — BUT Informatique 3A, parcours DACS — Mars 2026
 
 ---
 
-## 1. Objectif et périmètre
+## Table of Contents
 
-Ce document est le **Plan de Reprise d'Activité (PRA)** de l'infrastructure conteneurisée déployée dans le cadre de la SAÉ S6. Il décrit les procédures, les outils, les délais et les validations nécessaires pour restaurer les services en cas d'incident majeur.
+1. [Executive Summary](#1-executive-summary)
+2. [Risk Assessment](#2-risk-assessment)
+3. [Backup Strategy](#3-backup-strategy)
+4. [Recovery Procedures](#4-recovery-procedures)
+5. [RTO/RPO Summary Table](#5-rtorpo-summary-table)
+6. [Lessons Learned](#6-lessons-learned)
+7. [Architecture Diagram](#7-architecture-diagram)
 
-### Services couverts par ce PRA
+---
 
-| Service | Rôle | Criticité |
+## 1. Executive Summary
+
+This document is the Disaster Recovery Plan (DRP) for the containerized infrastructure deployed as part of the SAE S6 project. It covers the BookStack wiki (with MariaDB), the Prometheus/Grafana supervision stack, and the MinIO object storage used for offsite backups.
+
+**Backup strategy**: 3-2-1 rule — 3 copies of all critical data, on 2 different media (local loop device + S3 object storage), with 1 offsite copy (MinIO).
+
+**Key objectives**:
+- RPO (Recovery Point Objective): **24 hours** — daily automated backups at 02:00
+- RTO (Recovery Time Objective): **< 1 hour** — all tested scenarios recovered in under 30 seconds
+
+**Services covered**: BookStack (web application), MariaDB (database), Grafana (dashboards), MinIO (offsite backup storage).
+
+---
+
+## 2. Risk Assessment
+
+| Risk | Probability | Impact | Mitigation |
+|---|---|---|---|
+| Disk failure (data loss) | Medium | Critical — all services down, data lost | Local Restic backups on separate loop device + offsite MinIO replication |
+| Accidental volume deletion | High | High — database or uploads lost | Automated daily backups, restore scripts tested and documented |
+| Ransomware / data encryption | Low | Critical — all local data compromised | Offsite copy on MinIO (separate storage), restore from S3 backend |
+| Configuration error | Medium | Medium — service misconfigured | Configuration files included in backup (docker-compose.yml, .env) |
+| Backup failure (unnoticed) | Medium | High — false sense of security | Prometheus monitoring, Alertmanager alerts if no backup > 25h or integrity check fails |
+| Credential loss (Restic password) | Low | Critical — backups unrecoverable | Password file stored separately (secrets/restic-password), documented in team |
+
+---
+
+## 3. Backup Strategy
+
+### 3-2-1 Rule Implementation
+
+| Copy | Location | Type | Encryption |
+|---|---|---|---|
+| Copy 1 | Docker volumes (live data) | Production | No |
+| Copy 2 | /mnt/restic-backup/repo (loop device) | Local backup | AES-256 (Restic) |
+| Copy 3 | s3:http://localhost:9000/restic-backup (MinIO) | Offsite backup | AES-256 (Restic) |
+
+### What is backed up
+
+| Data | Method | Location in snapshot |
 |---|---|---|
-| **BookStack** | Wiki interne (application web) | ⚠️ Élevée |
-| **MariaDB** | Base de données de BookStack | 🚨 Critique |
-| **Grafana** | Dashboards de supervision | ⚠️ Élevée |
-| **Prometheus** | Collecte de métriques | 🟡 Modérée |
-| **MinIO** | Stockage objet S3 (sauvegardes externalisées) | 🚨 Critique |
+| MariaDB database | `mariadb-dump --single-transaction` | dumps/bookstack.sql |
+| BookStack volume (uploads, config) | tar.gz via Alpine container | volumes/bookstack_data.tar.gz |
+| Grafana volume (dashboards) | tar.gz via Alpine container | volumes/grafana_data.tar.gz |
+| Configuration files (.env, compose) | File copy | config/ |
 
-### Services exclus
+### Backup schedule
 
-- **Prometheus** : ses données (séries temporelles) ne sont pas persistées dans un volume nommé. Elles se recollectent automatiquement après redémarrage.
-- **Agents d'audit** (`agent_a`, `agent_b`) : entièrement stateless, aucune donnée à restaurer.
+- **Frequency**: Daily at 02:00 (systemd timer with `Persistent=true`)
+- **Retention**: 7 daily + 4 weekly + 12 monthly snapshots
+- **Integrity**: `restic check` after every backup (local and remote)
+- **Monitoring**: Prometheus metrics + Grafana dashboard + Alertmanager alerts
 
----
+### Tools
 
-## 2. Architecture globale et dépendances
-
-```
-┌───────────────────────────────────────────────────────────────────────┐
-│                         MACHINE DE PRODUCTION                         │
-│                                                                       │
-│   ┌─────────────┐   ┌──────────────┐   ┌────────────────────────┐   │
-│   │  BookStack   │   │   MariaDB    │   │  Stack Supervision     │   │
-│   │  (web app)   │◄──►  (bookstack  │   │  Prometheus / Grafana  │   │
-│   │  :8080       │   │   database)  │   │  :9090 / :3000         │   │
-│   └──────┬───── ┘   └──────┬───────┘   └──────────┬─────────────┘   │
-│          │                 │                        │                  │
-│     Volume bookstack_       │                  Volume grafana-data     │
-│     bookstack_data          │                  (dashboards)            │
-│          │                 │ (dump SQL)                │               │
-│          └──────────────────┼───────────────────────────────────────  │
-│                             ▼                                          │
-│                 ┌──────────────────────────────┐                      │
-│                 │  SCRIPT backup.sh (02h00)    │                      │
-│                 │  ─────────────────────────── │                      │
-│                 │  1. mariadb-dump             │                      │
-│                 │  2. tar volumes Docker       │                      │
-│                 │  3. restic backup (local)    │                      │
-│                 │  4. restic copy  (MinIO)     │                      │
-│                 │  5. restic forget (rétention)│                      │
-│                 │  6. restic check (intégrité) │                      │
-│                 │  7. rapport JSON + .prom     │                      │
-│                 └──────────┬───────────────────┘                      │
-│                            │                                           │
-│            ┌───────────────┴───────────────┐                          │
-│            ▼                               ▼                           │
-│   ┌────────────────────┐       ┌──────────────────────┐              │
-│   │  Dépôt Restic LOCAL│       │  MinIO (S3)          │              │
-│   │  /mnt/restic-backup│       │  :9000 (API)         │              │
-│   │  (loop device 2 GB)│       │  :9001 (console web) │              │
-│   │  Copie 2 — chiffré │       │  Copie 3 — hors site │              │
-│   └────────────────────┘       └──────────────────────┘              │
-│                                                                       │
-│   ┌────────────────────────────────────────────────────────────────┐ │
-│   │  SUPERVISION (node_exporter + Prometheus + Grafana)            │ │
-│   │  Lit metrics/backup.prom → alerte si backup > 25h ou erreur   │ │
-│   └────────────────────────────────────────────────────────────────┘ │
-│                                                                       │
-│   ┌────────────────────────────────────────────────────────────────┐ │
-│   │  PLANIFICATION : systemd timer (pra-backup.timer)             │ │
-│   │  OnCalendar=*-*-* 02:00:00  — Tous les jours à 2h du matin   │ │
-│   └────────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────────────────────────────────────────────┘
-```
-
-### Dépendances techniques
-
-| Composant | Dépend de | Impact si absent |
-|---|---|---|
-| BookStack | MariaDB | Démarre mais affiche une erreur de BDD |
-| MariaDB | Volume `bookstack_mariadb_data` | Démarre avec une base vide |
-| `backup.sh` | Docker, Restic, `jq`, BookStack en cours | Peut échouer partiellement |
-| Métriques Prometheus | `backup.sh` exécuté au moins une fois | Graphiques vides dans Grafana |
-| Alertes Alertmanager | Prometheus + `alerts.yml` | Aucune alerte envoyée |
-| Réplication MinIO | `secrets/minio-credentials` et MinIO actif | Réplication silencieusement ignorée |
+- **Restic** (v0.18+): incremental, encrypted, deduplicated backups
+- **MinIO**: S3-compatible self-hosted object storage
+- **systemd timer**: scheduling
+- **Prometheus + Grafana + Alertmanager**: monitoring and alerting
 
 ---
 
-## 3. Tableau RPO / RTO — Théorique vs Mesuré
+## 4. Recovery Procedures
 
-### Définitions
+> **Prerequisites for all procedures**:
+> - Access to the Linux deployment machine (root or sudo)
+> - The Git repository is cloned (adapt `PROJECT_DIR` if needed)
+> - `secrets/restic-password` is present (gitignored file — retrieve from team lead)
 
-- **RPO** (Recovery Point Objective) : perte de données maximale acceptable — "jusqu'où en arrière peut-on remonter ?"
-- **RTO** (Recovery Time Objective) : durée maximale de coupure de service acceptable — "combien de temps pour remettre en ligne ?"
+Detailed step-by-step procedures are in the [restoration-procedures](restoration-procedures/) directory.
 
-### Tableau de synthèse
+### 4.1. Scenario 1 — Partial file restoration
 
-| Service | RPO Théorique | RTO Théorique | RTO Mesuré (test) | Scénario testé |
+**Situation**: A specific file has been accidentally deleted or corrupted.
+
+```bash
+./scripts/restore/restore-file.sh config/bookstack.env
+```
+
+See: [partial-service-restoration.md](restoration-procedures/partial-service-restoration.md)
+
+### 4.2. Scenario 2 — Database restoration
+
+**Situation**: The MariaDB database is corrupted or data was accidentally deleted.
+
+```bash
+./scripts/restore/restore-db.sh
+```
+
+See: [database-restoration.md](restoration-procedures/database-restoration.md)
+
+### 4.3. Scenario 3 — Full service restoration (disk failure)
+
+**Situation**: The disk containing Docker volumes is lost. Containers and data are inaccessible.
+
+```bash
+cd bookstack/ && docker compose down -v && cd ..
+./scripts/restore/restore-full.sh
+```
+
+See: [full-service-restoration.md](restoration-procedures/full-service-restoration.md)
+
+### 4.4. Scenario 4 — Ransomware (restore from MinIO)
+
+**Situation**: A ransomware has encrypted all local files, including Docker volumes AND the local Restic repository. Only the MinIO offsite copy is intact.
+
+```bash
+cd bookstack/ && docker compose down -v && cd ..
+./scripts/restore/restore-ransomware.sh
+```
+
+See: [ransomware-restoration.md](restoration-procedures/ransomware-restoration.md)
+
+---
+
+## 5. RTO/RPO Summary Table
+
+| Service | RPO Target | RTO Target | RTO Measured | Scenario |
 |---|---|---|---|---|
-| BookStack (application) | **24h** | **< 1h** | _À mesurer lors de la démo_ | Scénario 1 & 3 |
-| MariaDB (base de données) | **24h** | **< 30 min** | _À mesurer lors de la démo_ | Scénario 1 & 2 |
-| Grafana (dashboards) | **24h** | **< 30 min** | _À mesurer lors de la démo_ | Scénario 1 |
-| Prometheus (métriques) | **N/A** | **< 15 min** | Quasi-immédiat (`docker compose up`) | Pas de données à restaurer |
+| BookStack (file) | 24h | < 1h | **1 second** | Scenario 1 — partial restore |
+| MariaDB (database) | 24h | < 30 min | **1 second** | Scenario 2 — DB restore |
+| BookStack (full service) | 24h | < 1h | **21 seconds** | Scenario 3 — disk failure |
+| BookStack (from MinIO) | 24h | < 1h | **21 seconds** | Scenario 4 — ransomware |
+| Prometheus | N/A | < 15 min | Instant (`docker compose up`) | Stateless — no data to restore |
+| Grafana (dashboards) | 24h | < 30 min | Included in scenario 3 | Provisioned via config files |
 
-> **Note** : Les mesures "RTO Mesuré" doivent être renseignées lors des tests réels en salle (voir Étape 5). Le temps inclut la détection, la restauration et la vérification.
+All measured RTOs are well under the targets defined in the strategy phase.
 
-### Politique de rétention des sauvegardes
+---
+
+## 6. Lessons Learned
+
+### What worked well
+
+- **Restic** proved to be an excellent choice: incremental, encrypted, fast, and easy to use with both local and S3 backends
+- **Docker volume export via Alpine container** solved the root-permission issues cleanly
+- **The 3-2-1 strategy** was validated end-to-end: the ransomware scenario successfully restored from MinIO when the local repository was corrupted
+- **Automated setup script** (`setup.sh`) enables full environment reproduction on a fresh machine (tested on Arch Linux, Debian, and Linux Mint)
+- **Prometheus monitoring** provides immediate visibility on backup health without manual checks
+
+### What failed or caused issues
+
+- **Loop device lost after reboot**: an accidental `dd` while mounted corrupted the filesystem. Fixed by adding an fstab entry and documenting the setup process
+- **Restic syntax change** (v0.17+): `--to-repo` became `--from-repo`, causing copy failures. Required investigation and script update
+- **Docker volume permissions**: files owned by root inside containers couldn't be backed up directly. Solved by tar export via Alpine container
+- **`docker-compose-plugin` not available on Linux Mint/Debian**: setup script had to be adapted for multiple distributions
+- **Running backup.sh with sudo**: created root-owned files in reports/ and metrics/, causing permission errors on subsequent runs without sudo
+
+### What could be improved in production
+
+- **MinIO on a separate machine**: currently on the same host, which doesn't provide true offsite protection against hardware failure
+- **Alertmanager receiver**: currently empty (no email/Slack configured). In production, alerts should be sent to the on-call team
+- **Backup encryption key management**: the Restic password file should be stored in a proper secrets manager (e.g., HashiCorp Vault), not just a chmod 600 file
+- **Automated restore testing**: scheduled restore tests (e.g., monthly) to verify backup integrity proactively, not just reactively
+
+---
+
+## 7. Architecture Diagram
 
 ```
-restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --prune
++-----------------------------------------------------------------------+
+|                        PRODUCTION MACHINE                              |
+|                                                                        |
+|   +-------------+   +--------------+   +------------------------+     |
+|   |  BookStack   |   |   MariaDB    |   |  Supervision Stack     |     |
+|   |  (web app)   |<->|  (bookstack  |   |  Prometheus / Grafana  |     |
+|   |  :6875       |   |   database)  |   |  :9090 / :3000         |     |
+|   +------+-------+   +------+-------+   +----------+-------------+     |
+|          |                  |                       |                   |
+|     Volume:                 |                  Volume:                  |
+|     bookstack_data          |                  grafana-data             |
+|          |                  | (SQL dump)            |                   |
+|          +------------------+---------------+-------+                   |
+|                             v                                          |
+|                 +------------------------------+                       |
+|                 |  backup.sh (daily at 02:00)  |                       |
+|                 |  1. mariadb-dump             |                       |
+|                 |  2. tar volumes Docker       |                       |
+|                 |  3. restic backup (local)    |                       |
+|                 |  4. restic copy  (MinIO)     |                       |
+|                 |  5. restic forget (retention) |                       |
+|                 |  6. restic check (integrity) |                       |
+|                 |  7. JSON report + .prom      |                       |
+|                 +------------+-----------------+                       |
+|                              |                                         |
+|              +---------------+---------------+                         |
+|              v                               v                         |
+|   +--------------------+       +----------------------+                |
+|   | Local Restic Repo  |       | MinIO (S3)           |                |
+|   | /mnt/restic-backup |       | :9000 (API)          |                |
+|   | (loop device 2 GB) |       | :9001 (web console)  |                |
+|   | Copy 2 - encrypted |       | Copy 3 - offsite     |                |
+|   +--------------------+       +----------------------+                |
+|                                                                        |
+|   +----------------------------------------------------------------+  |
+|   | MONITORING (node_exporter + Prometheus + Grafana)               |  |
+|   | Reads metrics/backup.prom -> alerts if backup > 25h or error   |  |
+|   +----------------------------------------------------------------+  |
+|                                                                        |
+|   +----------------------------------------------------------------+  |
+|   | SCHEDULING: systemd timer (pra-backup.timer)                   |  |
+|   | OnCalendar=*-*-* 02:00:00 — Daily at 2:00 AM                  |  |
+|   +----------------------------------------------------------------+  |
++-----------------------------------------------------------------------+
 ```
 
-| Granularité | Conservation | Couverture |
+### Technical Dependencies
+
+| Component | Depends on | Impact if missing |
 |---|---|---|
-| Quotidienne | 7 snapshots | Dernière semaine complète |
-| Hebdomadaire | 4 snapshots | Dernier mois |
-| Mensuelle | 12 snapshots | Dernière année |
+| BookStack | MariaDB | Starts but shows database error |
+| MariaDB | Volume `bookstack_mariadb_data` | Starts with empty database |
+| backup.sh | Docker, Restic, jq, BookStack running | May fail partially |
+| Prometheus metrics | backup.sh executed at least once | Empty graphs in Grafana |
+| Alertmanager alerts | Prometheus + alerts.yml | No alerts sent |
+| MinIO replication | secrets/minio-credentials + MinIO running | Replication silently skipped |
 
 ---
 
-## 4. Procédures de reprise d'activité
-
-> **Prérequis pour toutes les procédures** :
-> - Avoir accès à la machine Linux de déploiement (root ou sudo)
-> - Le dépôt Git est cloné dans `/opt/pra-sae-s6` (ou adapter `PROJECT_DIR`)
-> - `secrets/restic-password` est présent (fichier gitignored — à récupérer auprès du responsable)
-
----
-
-### 4.1. Scénario 1 — Panne disque
-
-**Situation** : le disque contenant les volumes Docker tombe en panne.  
-Les conteneurs ne démarrent plus, les données sont inaccessibles.  
-**Simulation** : `docker volume rm bookstack_bookstack_data bookstack_mariadb_data`
-
-**Prérequis spécifiques** : Le dépôt Restic local (`/mnt/restic-backup`) est intact.
-
-**Procédure** :
-
-```bash
-# 1. Arrêter la stack si encore partiellement active
-docker compose -f /opt/pra-sae-s6/bookstack/docker-compose.yml down
-
-# 2. Lancer la restauration complète
-sudo bash /opt/pra-sae-s6/scripts/restore/restore-full.sh
-```
-
-**Ce que fait le script `restore-full.sh`** :
-1. Monte le loop device si nécessaire (`/mnt/restic-backup`)
-2. Restaure le dernier snapshot Restic vers `/tmp/restic-restore/`
-3. Démarre uniquement MariaDB
-4. Exécute `DROP DATABASE bookstack; CREATE DATABASE bookstack;` pour partir d'une ardoise propre
-5. Réinjecte le dump SQL dans MariaDB
-6. Restaure le volume BookStack depuis l'archive tar
-7. Démarre BookStack
-8. Affiche le temps de reprise
-
-**Vérification post-reprise** : voir section [Checklist](#5-checklist-de-validation-post-reprise).
-
----
-
-### 4.2. Scénario 2 — Suppression accidentelle d'un volume Docker
-
-**Situation** : un opérateur exécute par erreur `docker volume rm bookstack_mariadb_data`.  
-Seule la base de données est perdue, les uploads BookStack sont intacts.
-
-**Procédure** :
-
-```bash
-# Restauration ciblée de la base de données uniquement
-sudo bash /opt/pra-sae-s6/scripts/restore/restore-db.sh
-```
-
-**Ce que fait le script `restore-db.sh`** :
-1. Monte le loop device si nécessaire
-2. Restaure uniquement le dump SQL depuis le dernier snapshot Restic
-3. S'assure que le conteneur MariaDB tourne (le relance si besoin)
-4. Exécute `DROP DATABASE bookstack; CREATE DATABASE bookstack;`
-5. Réinjecte le dump SQL
-6. Redémarre BookStack
-
-**Note** : les uploads et fichiers de configuration BookStack sont **intacts** — pas besoin de restaurer le volume `bookstack_bookstack_data`.
-
----
-
-### 4.3. Scénario 3 — Ransomware
-
-**Situation** : un ransomware a chiffré tous les fichiers accessibles sur la machine, y compris les volumes Docker **et le dépôt Restic local**. C'est le scénario de pire cas.  
-La seule copie utilisable est la sauvegarde externalisée dans **MinIO**.
-
-**Prérequis spécifiques** :
-- MinIO est accessible (sur la même machine ou sur un hôte séparé)
-- `secrets/minio-credentials` est récupérable (copie sécurisée hors machine)
-- Le dépôt Restic distant est intact
-
-**Procédure** :
-
-```bash
-# S'assurer que les credentials MinIO sont présents
-# (les récupérer depuis une sauvegarde sécurisée ou le gestionnaire de secrets)
-cp /chemin/securise/minio-credentials /opt/pra-sae-s6/secrets/minio-credentials
-
-# Lancer la restauration depuis MinIO uniquement
-sudo bash /opt/pra-sae-s6/scripts/restore/restore-ransomware.sh
-```
-
-**Ce que fait le script `restore-ransomware.sh`** :
-1. Charge les credentials MinIO depuis `secrets/minio-credentials`
-2. Vérifie la connectivité vers MinIO
-3. Lance `restic restore` **directement depuis le dépôt S3 distant** (bypass du dépôt local compromis)
-4. Restaure les volumes et le dump SQL depuis le snapshot distant
-5. Effectue un `DROP DATABASE` + réinjection SQL
-6. Restaure le volume BookStack
-7. Relance la stack complète
-
-> ⚠️ **Important** : après une restauration depuis le dépôt distant, réinitialiser le dépôt Restic local :
-> ```bash
-> # Supprimer l'image du loop device corrompue
-> sudo rm /opt/restic-disk.img
-> # Relancer le setup pour recréer le loop device et le dépôt local vierge
-> sudo bash /opt/pra-sae-s6/scripts/setup.sh
-> ```
-
----
-
-## 5. Checklist de validation post-reprise
-
-À exécuter **après chaque restauration**, quel que soit le scénario.
-
-### ✅ Services Docker
-
-```bash
-docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-```
-
-Attendu :
-
-| Conteneur | Statut | Port |
-|---|---|---|
-| `bookstack` | `Up` | `0.0.0.0:8080->80/tcp` |
-| `bookstack_db` | `Up` | (interne) |
-
-### ✅ Accès à BookStack
-
-- Ouvrir `http://<IP_MACHINE>:8080` dans un navigateur
-- Vérifier que la page de connexion s'affiche
-- Se connecter avec les credentials habituels
-- Vérifier que les pages du wiki sont présentes et lisibles
-
-### ✅ Intégrité des données
-
-```bash
-# Vérifier que la base de données répond
-docker exec bookstack_db mariadb -uroot -p"$(grep DB_ROOT_PASS /opt/pra-sae-s6/bookstack/.env | cut -d= -f2)" \
-  -e "SELECT COUNT(*) AS nb_pages FROM bookstack.pages;"
-```
-
-> Résultat attendu : un nombre > 0 si des pages avaient été créées avant l'incident.
-
-### ✅ Dépôt Restic local
-
-```bash
-export RESTIC_REPOSITORY=/mnt/restic-backup/repo
-export RESTIC_PASSWORD_FILE=/opt/pra-sae-s6/secrets/restic-password
-restic snapshots    # lister les snapshots disponibles
-restic check        # vérifier l'intégrité du dépôt
-```
-
-### ✅ Dépôt Restic distant (MinIO)
-
-```bash
-source /opt/pra-sae-s6/secrets/minio-credentials
-export RESTIC_REPOSITORY=s3:http://localhost:9000/restic-backup
-export RESTIC_PASSWORD_FILE=/opt/pra-sae-s6/secrets/restic-password
-restic snapshots
-restic check
-```
-
-### ✅ Métriques et supervision
-
-```bash
-# Vérifier que node_exporter scrape bien le fichier .prom
-curl -s http://localhost:9100/metrics | grep backup_
-```
-
-Attendu : les métriques `backup_last_success_timestamp`, `backup_duration_seconds`, `backup_snapshot_size_bytes`, `backup_integrity_status` sont présentes.
-
-- Ouvrir Grafana (`http://<IP>:3000`) → Dashboard "Sauvegardes Backup"
-- Vérifier que `backup_integrity_status` est à **0 (OK)**
-
-### ✅ Prochain backup automatique
-
-```bash
-systemctl status pra-backup.timer
-systemctl list-timers pra-backup.timer
-```
-
-> Vérifier que le prochain déclenchement est bien planifié à 02h00.
-
----
-
-## 6. Contacts et responsabilités
-
-| Rôle | Responsabilité |
-|---|---|
-| **Responsable backup (Étape 3)** | Configuration MinIO, `backup.sh`, scripts de restauration |
-| **Responsable supervision (Étape 4)** | `systemd`, Prometheus, Grafana, Alertmanager |
-| **Responsable tests (Étape 5)** | Exécution des scénarios, mesure des RTO réels |
-| **Responsable DRP (Étape 6)** | Ce document, mise à jour post-test |
-
----
-
-*Document rédigé dans le cadre de la SAÉ S6.B.01 — BUT Informatique 3A, parcours DACS — Avril 2026*
+*Document written as part of SAE S6.B.01 — BUT Informatique 3A, parcours DACS — April 2026*
