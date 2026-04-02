@@ -47,3 +47,28 @@ sudo ./scripts/setup.sh
 ./scripts/restore/restore-full.sh                        # service complet
 ./scripts/restore/restore-ransomware.sh                  # depuis MinIO (repo local corrompu)
 ```
+
+## Démo — Étape 3 : Réplication Restic → MinIO
+
+```bash
+# Variables
+export RESTIC_PASSWORD_FILE="./secrets/restic-password"
+export RESTIC_REPOSITORY="/mnt/restic-backup/repo"
+source ./secrets/minio-credentials
+RESTIC_REPO_S3="s3:http://localhost:9000/restic-backup"
+
+# 1. Snapshots locaux
+restic snapshots
+
+# 2. Copie vers MinIO (réplication incrémentale)
+restic copy --from-repo "${RESTIC_REPOSITORY}" \
+            --from-password-file "${RESTIC_PASSWORD_FILE}" \
+            --repo "${RESTIC_REPO_S3}" \
+            --password-file "${RESTIC_PASSWORD_FILE}"
+
+# 3. Vérifier que MinIO a reçu les snapshots
+RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic snapshots
+
+# 4. Vérifier l'intégrité du dépôt MinIO
+RESTIC_REPOSITORY="${RESTIC_REPO_S3}" restic check
+```
